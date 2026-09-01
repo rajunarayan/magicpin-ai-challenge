@@ -106,7 +106,7 @@ def handle_reply_message(
     # ------------------------------------------------------------------------
     if is_auto_reply(merchant_message) or is_repeated_auto_reply:
         logger.info(f"Auto-reply detected on turn {turn_number}: '{merchant_message[:40]}'")
-        if turn_number <= 2 and not is_repeated_auto_reply:
+        if turn_number <= 1 and not is_repeated_auto_reply:
             # Turn 1 auto-reply: Send a gentle flag for the owner
             owner_name = merchant.get("identity", {}).get("owner_first_name", "")
             salutation = f"Dr. {owner_name}" if category.get("slug") == "dentists" else (owner_name or "there")
@@ -116,8 +116,8 @@ def handle_reply_message(
                 "cta": "binary_yes_no",
                 "rationale": "Auto-reply detected. Providing low-friction re-entry prompt for the business owner."
             }
-        elif turn_number == 3 or is_repeated_auto_reply:
-            # Turn 2 auto-reply: Back off
+        elif turn_number <= 3 or is_repeated_auto_reply:
+            # Turn 2-3 auto-reply: Back off 4 hours
             return {
                 "action": "wait",
                 "wait_seconds": 14400,
