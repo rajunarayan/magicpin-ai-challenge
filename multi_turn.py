@@ -104,9 +104,18 @@ def handle_reply_message(
     # ------------------------------------------------------------------------
     # 2. AUTO-REPLY DETECTION
     # ------------------------------------------------------------------------
-    if is_auto_reply(merchant_message) or is_repeated_auto_reply:
+    msg_is_auto = is_auto_reply(merchant_message)
+    repeated_count = incoming_history.count(merchant_message)
+
+    if msg_is_auto or repeated_count >= 2:
         logger.info(f"Auto-reply detected on turn {turn_number}: '{merchant_message[:40]}'")
-        if turn_number <= 1 and not is_repeated_auto_reply:
+        if turn_number >= 4 or repeated_count >= 3:
+            # Turn 4+ auto-reply: Close conversation
+            return {
+                "action": "end",
+                "rationale": "Repeated auto-reply with no human interaction. Gracefully ending conversation."
+            }
+        elif turn_number <= 1:
             # Turn 1 auto-reply: Send a gentle flag for the owner
             owner_name = merchant.get("identity", {}).get("owner_first_name", "")
             salutation = f"Dr. {owner_name}" if category.get("slug") == "dentists" else (owner_name or "there")
@@ -116,18 +125,12 @@ def handle_reply_message(
                 "cta": "binary_yes_no",
                 "rationale": "Auto-reply detected. Providing low-friction re-entry prompt for the business owner."
             }
-        elif turn_number <= 3 or is_repeated_auto_reply:
+        else:
             # Turn 2-3 auto-reply: Back off 4 hours
             return {
                 "action": "wait",
                 "wait_seconds": 14400,
                 "rationale": "Auto-reply detected again. Backing off 4 hours to wait for the actual business owner."
-            }
-        else:
-            # Turn 4+ auto-reply: Close conversation
-            return {
-                "action": "end",
-                "rationale": "Repeated auto-reply with no human interaction. Gracefully ending conversation."
             }
 
     # ------------------------------------------------------------------------
