@@ -370,6 +370,117 @@ def receive_context():
 
 
 # ============================================================================
+# SMART FALLBACK - Data-driven messages when Gemini times out
+# ============================================================================
+
+def _build_smart_fallback(merchant: dict, category: dict, trigger: dict, customer: dict | None) -> dict:
+    """Build a high-compulsion message using actual merchant/category data."""
+    identity = merchant.get("identity", {})
+    perf = merchant.get("performance", {})
+    offers = merchant.get("offers", [])
+    merchant_name = identity.get("name", "there")
+    locality = identity.get("locality", "your area")
+    kind = trigger.get("kind", "update")
+    headline = trigger.get("headline", "")
+    is_customer = trigger.get("scope") == "customer" and customer is not None
+
+    # Extract real numbers
+    ctr = perf.get("ctr", 0)
+    peer_ctr = perf.get("peer_median_ctr", 0)
+    searches = perf.get("monthly_searches", 0)
+    missed = perf.get("missed_searches", 0)
+    best_offer = offers[0] if offers else {}
+    offer_str = f"{best_offer.get('title', 'service')} @ \u20B9{best_offer.get('price', '')}" if best_offer.get("price") else ""
+
+    # Customer-scoped fallback
+    if is_customer and customer:
+        cust_name = customer.get("name", "there")
+        days_ago = customer.get("last_visit_days_ago", 180)
+        body = f"Hi {cust_name}, {merchant_name} here \U0001F44B It's been {days_ago} days since your last visit."
+        if offer_str:
+            body += f" We have {offer_str} available for you."
+        body += " Want me to book a slot for you?"
+        return {
+            "body": body,
+            "cta": "binary_yes_no",
+            "send_as": "merchant_on_behalf",
+            "suppression_key": trigger.get("suppression_key", f"trig:{kind}"),
+            "rationale": f"Customer recall: {days_ago} days lapsed, specific offer cited, single CTA."
+        }
+
+    # Research digest
+    if kind == "research_digest":
+        digest_items = category.get("digest", [])
+        if digest_items:
+            item = digest_items[0]
+            source = item.get("source", "recent study")
+            title = item.get("title", headline)
+            body = f"Dr., quick flag: {title}. Worth a 2-min read. Want me to pull the abstract + draft a patient-ed WhatsApp you can share? \u2014 {source}"
+        else:
+            body = f"{merchant_name}, new research relevant to your practice just dropped: {headline}. Want me to pull the abstract for you?"
+        return {
+            "body": body, "cta": "open_ended", "send_as": "vera",
+            "suppression_key": trigger.get("suppression_key", ""),
+            "rationale": "Research digest: cited source, offered concrete next step, curiosity lever."
+        }
+
+    # Performance dip
+    if kind == "perf_dip":
+        body = f"{merchant_name}, heads up: {headline}."
+        if ctr and peer_ctr:
+            body += f" Your CTR is {ctr}% vs {peer_ctr}% {locality} peer median."
+        if offer_str:
+            body += f" You already have {offer_str} \u2014 want me to draft a quick campaign around it?"
+        else:
+            body += " Want me to suggest a quick fix?"
+        return {
+            "body": body, "cta": "binary_yes_no", "send_as": "vera",
+            "suppression_key": trigger.get("suppression_key", ""),
+            "rationale": f"Perf dip: specific CTR numbers ({ctr}% vs {peer_ctr}%), loss aversion, offer cited."
+        }
+
+    # Festival / seasonal
+    if kind in ("festival_upcoming", "festival_campaign", "category_seasonal"):
+        body = f"{merchant_name}, {headline}."
+        if offer_str:
+            body += f" Your {offer_str} is perfect for this. Want me to draft a campaign?"
+        else:
+            body += " Want me to help you plan a timely campaign?"
+        return {
+            "body": body, "cta": "binary_yes_no", "send_as": "vera",
+            "suppression_key": trigger.get("suppression_key", ""),
+            "rationale": "Festival trigger: timely, specific offer, single CTA."
+        }
+
+    # Default smart fallback - uses whatever data is available
+    body = f"Hi {merchant_name}"
+    if missed and missed > 0:
+        body += f", {missed} people in {locality} searched for your services but couldn't find you this month."
+        if offer_str:
+            body += f" Should I send them {offer_str}?"
+        else:
+            body += " Want me to help increase your visibility?"
+    elif searches and searches > 0:
+        body += f", {searches} people searched for services like yours in {locality} this month."
+        if offer_str:
+            body += f" Your {offer_str} could convert more of them. Want me to draft a campaign?"
+        else:
+            body += " Want me to show you how to capture more of them?"
+    elif offer_str:
+        body += f". Quick update: {headline}. You already have {offer_str} listed \u2014 want me to push it to nearby customers?"
+    else:
+        body += f". {headline}. Want me to walk you through the next step?"
+
+    return {
+        "body": body,
+        "cta": "open_ended" if not offer_str else "binary_yes_no",
+        "send_as": "vera",
+        "suppression_key": trigger.get("suppression_key", f"trig:{kind}"),
+        "rationale": f"Smart fallback for {kind}: used merchant data (searches={searches}, missed={missed}), real offer, locality-specific."
+    }
+
+
+# ============================================================================
 # PART 3: TICK - GEMINI-POWERED MESSAGE COMPOSITION
 # ============================================================================
 
@@ -453,16 +564,8 @@ def tick():
         # --- Compose message via Gemini ---
         result = compose_message(category, merchant, trigger, customer)
         if not result or not result.get("body"):
-            logger.warning(f"Composition returned None for trigger {trigger_id}, using tailored template")
-            merchant_name = merchant.get("identity", {}).get("name", "Doctor / Manager")
-            kind = trigger.get("kind", "")
-            result = {
-                "body": f"Hi {merchant_name}, important update regarding your {category.get('name', 'practice')} profile. Would you like to review performance and patient outreach?",
-                "cta": "open_ended",
-                "send_as": "vera",
-                "suppression_key": trigger.get("suppression_key", f"trig:{trigger_id}"),
-                "rationale": f"Tailored outreach for {kind}"
-            }
+            logger.warning(f"Composition returned None for trigger {trigger_id}, using smart fallback")
+            result = _build_smart_fallback(merchant, category, trigger, customer)
 
         # --- Build the action ---
         is_customer_facing = trigger.get("scope") == "customer" and customer is not None

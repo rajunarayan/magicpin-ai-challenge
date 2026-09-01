@@ -320,7 +320,7 @@ def call_gemini_rest(full_prompt: str) -> str | None:
                 headers={"Content-Type": "application/json"}
             )
             try:
-                with urllib.request.urlopen(req, timeout=7) as resp:
+                with urllib.request.urlopen(req, timeout=15) as resp:
                     res_data = json.loads(resp.read().decode("utf-8"))
                     candidates = res_data.get("candidates", [])
                     if candidates:
