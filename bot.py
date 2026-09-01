@@ -420,10 +420,27 @@ def tick():
         # --- Look up category ---
         category_slug = merchant.get("category_slug", "")
         category_entry = store["categories"].get(category_slug)
+
+        # Fallback: try to infer category from trigger_id or merchant identity
         if not category_entry:
-            logger.warning(f"Category not found: {category_slug}")
-            continue
-        category = category_entry["payload"]
+            for cat_key in store["categories"]:
+                if cat_key in trigger_id.lower() or cat_key in merchant_id.lower():
+                    category_entry = store["categories"][cat_key]
+                    category_slug = cat_key
+                    break
+
+        # Fallback: try first available category
+        if not category_entry and store["categories"]:
+            category_slug = next(iter(store["categories"]))
+            category_entry = store["categories"][category_slug]
+            logger.info(f"Using fallback category: {category_slug}")
+
+        # Final fallback: create minimal category
+        if not category_entry:
+            logger.warning(f"No category found, using minimal fallback for {trigger_id}")
+            category = {"name": "business", "voice": "professional"}
+        else:
+            category = category_entry["payload"]
 
         # --- Look up customer (if customer-scoped trigger) ---
         customer = None
